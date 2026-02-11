@@ -1,3 +1,7 @@
+package repository;
+
+import domain.Order;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -36,5 +40,10 @@ public class OrderRepository {
             if (o.getOrderId() == id) return o;
         }
         return null;
+    }
+
+    // Allow initializing nextId after loading existing orders from the database
+    public synchronized void setNextId(int nextId) {
+        this.nextId = nextId;
     }
 }

@@ -1,3 +1,5 @@
+package domain;
+
 public class Drink extends MenuItem {
     private boolean alcoholic;
 

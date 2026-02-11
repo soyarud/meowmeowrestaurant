@@ -1,6 +1,16 @@
+package server;
+
 import com.sun.net.httpserver.HttpServer;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpExchange;
+
+import domain.MenuItem;
+import domain.Order;
+import domain.InvalidOrderException;
+import repository.MenuItemRepository;
+import repository.OrderRepository;
+import controller.OrderController;
+import service.DatabaseManager;
 
 import java.io.*;
 import java.net.InetSocketAddress;
@@ -15,6 +25,8 @@ import java.util.List;
 public class RestServer {
     private static OrderController orderController;
     private static OrderRepository orderRepository;
+    private static MenuItemRepository menuRepository;
+    private static DatabaseManager databaseManager;
     private static final int PORT = 8080;
     
     // Database credentials
@@ -23,10 +35,43 @@ public class RestServer {
     private static final String DB_PASSWORD = "soyarud";
 
     public static void main(String[] args) throws IOException {
-        // Initialize order repository and controller
+        // Initialize repositories and controller
         orderRepository = new OrderRepository();
-        MenuItemRepository menuRepository = new MenuItemRepository();
+        menuRepository = new MenuItemRepository();
         orderController = new OrderController(orderRepository, menuRepository);
+        databaseManager = new DatabaseManager();
+
+        // Load existing orders from database into in-memory repository
+        try {
+            List<Order> dbOrders = databaseManager.loadOrders();
+            int maxId = 0;
+            for (Order o : dbOrders) {
+                orderRepository.save(o);
+                if (o.getOrderId() > maxId) maxId = o.getOrderId();
+            }
+            if (maxId > 0) {
+                orderRepository.setNextId(maxId + 1);
+            }
+            System.out.println("[Startup] Loaded " + dbOrders.size() + " orders from DB into repository");
+        } catch (Exception e) {
+            System.err.println("[Startup] Failed to load orders from DB: " + e.getMessage());
+        }
+
+        // Optional: Recreate tables with merged schema (uncomment to reset database)
+        // databaseManager.recreateTables();
+
+        // Populate menu repository with default items
+        menuRepository.save(new MenuItem(1, "Margherita Pizza", "Classic pizza with tomato and mozzarella", 12.99, "Main"));
+        menuRepository.save(new MenuItem(2, "Carbonara Pasta", "Spaghetti with eggs, cheese, and pancetta", 14.50, "Main"));
+        menuRepository.save(new MenuItem(3, "Caesar Salad", "Romaine lettuce with croutons and Caesar dressing", 8.75, "Appetizer"));
+        menuRepository.save(new MenuItem(4, "Tiramisu", "Italian coffee-flavored dessert", 6.99, "Dessert"));
+        menuRepository.save(new MenuItem(5, "Coca Cola", "Refreshing soft drink", 2.50, "Drink"));
+        menuRepository.save(new MenuItem(6, "House Red Wine", "Full-bodied red wine", 7.50, "Drink"));
+        menuRepository.save(new MenuItem(7, "Grilled Salmon", "Salmon from Balkhash", 18.99, "Main"));
+        menuRepository.save(new MenuItem(8, "Caesar Olive", "Kolbasa, egg, cucumber, mayonaise", 6.50, "Appetizer"));
+        menuRepository.save(new MenuItem(9, "Cheesecake", "Cheese and cake", 6.50, "Dessert"));
+        menuRepository.save(new MenuItem(10, "Red Wine", "100 years wine", 1000.00, "Drink"));
+        menuRepository.save(new MenuItem(11, "Botol of Water", "Water", 1.00, "Drink"));
 
         // Create HTTP server
         HttpServer server = HttpServer.create(new InetSocketAddress(PORT), 0);
@@ -41,17 +86,14 @@ public class RestServer {
         server.setExecutor(null);
         server.start();
 
-        System.out.println("╔════════════════════════════════════════════════════════╗");
-        System.out.println("║  🍝 Bella Italia Restaurant - REST Server Started 🍝  ║");
-        System.out.println("╠════════════════════════════════════════════════════════╣");
-        System.out.println("║  Server running on port: " + PORT);
-        System.out.println("║  Open in browser: http://localhost:" + PORT);
-        System.out.println("║  Database: restaurant_db on localhost:5432             ║");
-        System.out.println("║  API Endpoints:                                       ║");
-        System.out.println("║    GET  /api/menu         - Get all menu items        ║");
-        System.out.println("║    POST /api/orders       - Create new order          ║");
-        System.out.println("║    GET  /api/orders       - Get all orders            ║");
-        System.out.println("╚════════════════════════════════════════════════════════╝");
+        System.out.println("meow meow restaurant");
+        System.out.println("Server running on port: " + PORT);
+        System.out.println("Open in browser: http://localhost:" + PORT);
+        System.out.println("Database: restaurant_db on localhost:5432");
+        System.out.println("API Endpoints:");
+        System.out.println("GET  /api/menu         - Get all menu items");
+        System.out.println("POST /api/orders       - Create new order");
+        System.out.println("GET  /api/orders       - Get all orders");
     }
 
     /**
@@ -122,8 +164,24 @@ public class RestServer {
                 stmt.close();
             } catch (SQLException e) {
                 System.err.println("[MenuAPI] Database error: " + e.getMessage());
-                e.printStackTrace();
-                return "[{\"error\":\"Database connection failed: " + escapeJson(e.getMessage()) + "\"}]";
+                System.err.println("[MenuAPI] Falling back to in-memory menu repository");
+                
+                // Fallback to in-memory repository
+                boolean first = true;
+                for (MenuItem item : menuRepository.getAll()) {
+                    if (!first) json.append(",");
+                    
+                    json.append("{")
+                        .append("\"id\":").append(item.getId()).append(",")
+                        .append("\"name\":\"").append(escapeJson(item.getName())).append("\",")
+                        .append("\"description\":\"").append(escapeJson(item.getDescription())).append("\",")
+                        .append("\"price\":").append(String.format(java.util.Locale.US, "%.2f", item.getPrice())).append(",")
+                        .append("\"category\":\"").append(escapeJson(item.getCategory())).append("\"")
+                        .append("}");
+                    
+                    first = false;
+                    System.out.println("[MenuAPI] Loaded (from memory): " + item.getId() + " | " + item.getName() + " | Category: " + item.getCategory() + " | Price: $" + item.getPrice());
+                }
             }
             
             json.append("]");
@@ -160,8 +218,7 @@ public class RestServer {
         }
 
         private void handleGetOrders(HttpExchange exchange, String path) throws IOException {
-            List<Order> orders = orderController.getAllOrders();
-            String json = convertOrdersToJson(orders);
+            String json = databaseManager.getAllOrdersAsJson();
             sendJsonResponse(exchange, json, 200);
         }
 
@@ -188,11 +245,14 @@ public class RestServer {
                     return;
                 }
 
-                // Create order with database menu items
+                // Create order with menu items from repository
                 Order order = createOrderFromDatabase(customerName, items);
                 String json = convertOrderToJson(order);
                 System.out.println("[OrderAPI] SUCCESS: Order created - " + json);
                 sendJsonResponse(exchange, json, 201);
+            } catch (InvalidOrderException e) {
+                System.err.println("[OrderAPI] ERROR: Invalid order - " + e.getMessage());
+                sendErrorResponse(exchange, 400, "Invalid order: " + e.getMessage());
             } catch (Exception e) {
                 System.err.println("[OrderAPI] ERROR creating order: " + e.getMessage());
                 e.printStackTrace();
@@ -200,41 +260,37 @@ public class RestServer {
             }
         }
         
-        private Order createOrderFromDatabase(String customerName, List<OrderController.OrderItemRequest> items) throws SQLException, InvalidOrderException {
+        private Order createOrderFromDatabase(String customerName, List<OrderController.OrderItemRequest> items) throws InvalidOrderException {
             int orderId = orderRepository.getNextOrderId();
             Order order = new Order(orderId, customerName);
             double totalPrice = 0;
             
-            try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD)) {
-                for (OrderController.OrderItemRequest itemReq : items) {
-                    String query = "SELECT id, name, description, price, category FROM menu_items WHERE id = ?";
-                    PreparedStatement stmt = conn.prepareStatement(query);
-                    stmt.setInt(1, itemReq.menuItemId);
-                    ResultSet rs = stmt.executeQuery();
-                    
-                    if (!rs.next()) {
-                        throw new InvalidOrderException("Menu item with ID " + itemReq.menuItemId + " not found");
-                    }
-                    
-                    int id = rs.getInt("id");
-                    String name = rs.getString("name");
-                    String description = rs.getString("description");
-                    double price = rs.getDouble("price");
-                    String category = rs.getString("category");
-                    
-                    MenuItem item = new MenuItem(id, name, description, price, category);
-                    
-                    // Add item to order based on quantity
-                    for (int i = 0; i < itemReq.quantity; i++) {
-                        order.addItem(item);
-                        totalPrice += price;
-                    }
-                    
-                    rs.close();
-                    stmt.close();
-                    
-                    System.out.println("[OrderAPI] Added to order: " + name + " x" + itemReq.quantity);
+            // Create order in database
+            int dbOrderId = databaseManager.createOrder(customerName);
+            if (dbOrderId == -1) {
+                throw new InvalidOrderException("Failed to create order in database");
+            }
+            
+            for (OrderController.OrderItemRequest itemReq : items) {
+                // Get item from repository
+                MenuItem item = menuRepository.findById(itemReq.menuItemId);
+                
+                // If not found in repository, create a placeholder item
+                if (item == null) {
+                    System.out.println("[OrderAPI] Item #" + itemReq.menuItemId + " not in repository, creating placeholder");
+                    item = new MenuItem(itemReq.menuItemId, "Item #" + itemReq.menuItemId, "Menu item", 0.0, "Other");
                 }
+                
+                // Add item to order based on quantity
+                for (int i = 0; i < itemReq.quantity; i++) {
+                    order.addItem(item);
+                    totalPrice += item.getPrice();
+                }
+                
+                // Save item to database with item details
+                databaseManager.addItemToOrder(dbOrderId, itemReq.menuItemId, itemReq.quantity, item.getName(), item.getPrice());
+                
+                System.out.println("[OrderAPI] Added to order: " + item.getName() + " x" + itemReq.quantity);
             }
             
             order.setTotalPrice(totalPrice);

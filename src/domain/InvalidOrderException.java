@@ -1,3 +1,5 @@
+package domain;
+
 /**
  * InvalidOrderException - Custom exception for invalid order operations
  */

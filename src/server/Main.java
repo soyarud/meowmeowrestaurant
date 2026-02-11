@@ -1,14 +1,24 @@
+package server;
+
+import domain.MenuItem;
+import domain.MainCourse;
+import domain.Appetizer;
+import domain.Dessert;
+import domain.Drink;
+import domain.Order;
+import domain.Restaurant;
+import domain.InvalidOrderException;
+
 public class Main {
     public static void main(String[] args) {
         // Print program header
         System.out.println("=== RESTAURANT ORDER MANAGEMENT SYSTEM ===\n");
 
         // 1. CREATE RESTAURANT OBJECT (constructor demonstration)
-        Restaurant italianRestaurant = new Restaurant("Bella Italia");
+        Restaurant italianRestaurant = new Restaurant("meow meow restaurant");
         System.out.println("Restaurant created: " + italianRestaurant.getName());
 
         // 2. CREATE MENU ITEMS (creating multiple objects)
-        System.out.println("\n--- Creating menu items ---");
         System.out.println("\n--- Creating menu items ---");
         MenuItem pizza = new MainCourse(1, "Margherita Pizza",
                 "Classic pizza with tomato sauce and mozzarella", 12.99);
@@ -30,7 +40,6 @@ public class Main {
         italianRestaurant.addMenuItem(tiramisu);
         italianRestaurant.addMenuItem(cola);
         italianRestaurant.addMenuItem(wine);
-        // REPLACED THE OLD CODE, AND NOW IT USES INHERITANCE AND POLYMORPHISM
 
         // 4. DISPLAY MENU (output to console)
         italianRestaurant.displayMenu();
@@ -136,67 +145,5 @@ public class Main {
         System.out.println("Menu items: " + italianRestaurant.getMenu().size());
         System.out.println("Active orders: " + italianRestaurant.getOrders().size());
         System.out.println("\n=== SYSTEM READY ===");
-
-
-        System.out.println("\n=== ASSIGNMENT 3: DATABASE DEMONSTRATION ===");
-
-        DatabaseManager db = new DatabaseManager();
-
-        // 1. Insert some menu items into DB
-        db.insertMenuItem("Margherita Pizza", "Classic pizza with tomato and mozzarella", 12.99, "Main");
-        db.insertMenuItem("Coca-Cola", "Refreshing soft drink", 2.50, "Drink");
-        db.insertMenuItem("Tiramisu", "Italian coffee-flavored dessert", 6.99, "Dessert");
-
-        // 2. Read and display all items from DB
-        db.readMenuItems();
-
-        // 3. Update price
-        db.updateMenuItemPrice("Margherita Pizza", 14.99);
-
-        // 4. Read again to see change
-        db.readMenuItems();
-
-        // 5. Delete one item
-        db.deleteMenuItem("Coca-Cola");
-
-        // 6. Final read
-        db.readMenuItems();
-
-        System.out.println("\n=== DATABASE OPERATIONS COMPLETED ===");
-
-
-
-        System.out.println("\n=== DATABASE RESET FOR 4TH ASSIGNMENT ===");
-
-        // 1. WIPE THE SLATE CLEAN (This deletes all old/bad data)
-        System.out.println("Recreating tables...");
-        db.recreateTables();
-
-        // 2. INSERT CLEAN, PROFESSIONAL DATA
-        System.out.println("Inserting fresh menu items...");
-
-        // Main Courses
-        db.insertMenuItem("Margherita pizza", "most popular pizza with pomidors", 12.99, "Main");
-        db.insertMenuItem("Carbonara pasta", "spaghetti yk yk", 14.50, "Main");
-        db.insertMenuItem("Grilled salmon", "salmon from Balkhash", 18.99, "Main");
-
-        // Appetizers
-        db.insertMenuItem("Oliv'e", "kolbasa, egg, cucumber, mayonez", 6.50, "Appetizer");
-        db.insertMenuItem("Caesar salad", "imagine: you died to become a salad", 8.99, "Appetizer");
-
-        // Desserts
-        db.insertMenuItem("Tiramisu", "tiramisu lol", 7.50, "Dessert");
-        db.insertMenuItem("Cheesecake", "cheese and cake", 6.50, "Dessert");
-
-        // Drinks
-        db.insertMenuItem("Koka kola", "it's not a coca-cola", 2.50, "Drink");
-        db.insertMenuItem("Red wine", "100 years wine lol", 1000.00, "Drink");
-        db.insertMenuItem("Botol of woter", "woter", 1.00, "Drink");
-
-        // 3. VERIFY
-        System.out.println("\nCurrent Database Content:");
-        db.readMenuItems();
-
-        System.out.println("=== DATA RESET COMPLETE ===");
     }
 }

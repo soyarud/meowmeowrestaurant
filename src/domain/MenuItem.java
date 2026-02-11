@@ -1,4 +1,7 @@
+package domain;
+
 import java.util.Objects;
+
 public class MenuItem {
     // Attributes (class fields)
     private int id;
