@@ -7,7 +7,6 @@ import domain.Dessert;
 import domain.Drink;
 import domain.Order;
 import domain.Restaurant;
-import domain.InvalidOrderException;
 
 public class Main {
     public static void main(String[] args) {

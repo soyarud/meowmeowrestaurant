@@ -1,7 +1,7 @@
-package domain;
+package exceptions;
 
 /**
- * InvalidOrderException - Custom exception for invalid order operations
+ * custom exception for invalid order operations
  */
 public class InvalidOrderException extends Exception {
     public InvalidOrderException(String message) {

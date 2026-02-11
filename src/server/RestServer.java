@@ -6,7 +6,7 @@ import com.sun.net.httpserver.HttpExchange;
 
 import domain.MenuItem;
 import domain.Order;
-import domain.InvalidOrderException;
+import exceptions.InvalidOrderException;
 import repository.MenuItemRepository;
 import repository.OrderRepository;
 import controller.OrderController;
@@ -23,7 +23,6 @@ import java.util.List;
  * RestServer - HTTP Server with REST API endpoints and static file serving
  */
 public class RestServer {
-    private static OrderController orderController;
     private static OrderRepository orderRepository;
     private static MenuItemRepository menuRepository;
     private static DatabaseManager databaseManager;
@@ -38,7 +37,7 @@ public class RestServer {
         // Initialize repositories and controller
         orderRepository = new OrderRepository();
         menuRepository = new MenuItemRepository();
-        orderController = new OrderController(orderRepository, menuRepository);
+        new OrderController(orderRepository, menuRepository);
         databaseManager = new DatabaseManager();
 
         // Load existing orders from database into in-memory repository
@@ -260,7 +259,8 @@ public class RestServer {
             }
         }
         
-        private Order createOrderFromDatabase(String customerName, List<OrderController.OrderItemRequest> items) throws InvalidOrderException {
+        private Order createOrderFromDatabase(String customerName, List<OrderController.OrderItemRequest> items)
+        throws InvalidOrderException {
             int orderId = orderRepository.getNextOrderId();
             Order order = new Order(orderId, customerName);
             double totalPrice = 0;
@@ -377,7 +377,8 @@ public class RestServer {
         os.close();
     }
 
-    private static void sendErrorResponse(HttpExchange exchange, int statusCode, String message) throws IOException {
+    private static void sendErrorResponse(HttpExchange exchange, int statusCode, String message)
+    throws IOException {
         String json = String.format("{\"error\":\"%s\"}", escapeJson(message));
         byte[] response = json.getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().set("Content-Type", "application/json; charset=UTF-8");
@@ -396,16 +397,6 @@ public class RestServer {
             buffer.write(data, 0, nRead);
         }
         return new String(buffer.toByteArray(), StandardCharsets.UTF_8);
-    }
-
-    private static String convertOrdersToJson(List<Order> orders) {
-        StringBuilder json = new StringBuilder("[");
-        for (int i = 0; i < orders.size(); i++) {
-            json.append(convertOrderToJson(orders.get(i)));
-            if (i < orders.size() - 1) json.append(",");
-        }
-        json.append("]");
-        return json.toString();
     }
 
     private static String convertOrderToJson(Order order) {
@@ -492,7 +483,8 @@ public class RestServer {
     }
 
     private static String extractJsonString(String json, String key) {
-        String pattern = "\"" + key + "\":\"";
+        // More robust parsing that handles whitespace variations
+        String pattern = "\"" + key + "\"";
         int start = json.indexOf(pattern);
         System.out.println("[Debug] Extracting '" + key + "': pattern='" + pattern + "', start=" + start);
         if (start == -1) {
@@ -500,10 +492,34 @@ public class RestServer {
             return "";
         }
         
+        // Move past the key name
         start += pattern.length();
-        int end = json.indexOf("\"", start);
+        
+        // Skip whitespace and colon
+        while (start < json.length() && (Character.isWhitespace(json.charAt(start)) || json.charAt(start) == ':')) {
+            start++;
+        }
+        
+        // Skip opening quote
+        if (start < json.length() && json.charAt(start) == '"') {
+            start++;
+        } else {
+            System.out.println("[Debug] No opening quote found after key");
+            return "";
+        }
+        
+        // Find closing quote
+        int end = start;
+        while (end < json.length() && json.charAt(end) != '"') {
+            if (json.charAt(end) == '\\' && end + 1 < json.length()) {
+                end += 2; // Skip escaped characters
+            } else {
+                end++;
+            }
+        }
+        
         System.out.println("[Debug] After pattern, start=" + start + ", end=" + end);
-        if (end == -1) {
+        if (end == -1 || end >= json.length()) {
             System.out.println("[Debug] Closing quote not found, returning empty string");
             return "";
         }
