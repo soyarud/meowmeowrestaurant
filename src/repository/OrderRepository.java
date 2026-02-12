@@ -36,10 +36,20 @@ public class OrderRepository {
     }
 
     public synchronized Order findById(int id) {
-        for (Order o : orders) {
-            if (o.getOrderId() == id) return o;
+        return orders.stream()
+                .filter(o -> o.getOrderId() == id)
+                .findFirst()
+                .orElse(null);
+    }
+
+    public synchronized boolean deleteById(int id) {
+        for (int i = 0; i < orders.size(); i++) {
+            if (orders.get(i).getOrderId() == id) {
+                orders.remove(i);
+                return true;
+            }
         }
-        return null;
+        return false;
     }
 
     // Allow initializing nextId after loading existing orders from the database

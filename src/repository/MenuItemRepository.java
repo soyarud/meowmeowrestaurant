@@ -33,9 +33,9 @@ public class MenuItemRepository {
     }
 
     public synchronized MenuItem findById(int id) {
-        for (MenuItem m : menu) {
-            if (m.getId() == id) return m;
-        }
-        return null;
+        return menu.stream()
+                .filter(m -> m.getId() == id)
+                .findFirst()
+                .orElse(null);
     }
 }

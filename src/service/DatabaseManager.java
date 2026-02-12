@@ -131,6 +131,77 @@ public class DatabaseManager {
         return json.toString();
     }
 
+    // MENU item CRUD operations
+    public int createMenuItem(String name, String description, double price, String category) {
+        String sql = "INSERT INTO menu_items (name, description, price, category) VALUES (?, ?, ?, ?) RETURNING id";
+        try (Connection conn = connect();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, name);
+            pstmt.setString(2, description);
+            pstmt.setDouble(3, price);
+            pstmt.setString(4, category);
+            ResultSet rs = pstmt.executeQuery();
+            if (rs.next()) return rs.getInt(1);
+        } catch (SQLException e) {
+            System.out.println("createMenuItem failed: " + e.getMessage());
+        }
+        return -1;
+    }
+
+    public boolean updateMenuItem(int id, String name, String description, double price, String category) {
+        String sql = "UPDATE menu_items SET name = ?, description = ?, price = ?, category = ? WHERE id = ?";
+        try (Connection conn = connect();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, name);
+            pstmt.setString(2, description);
+            pstmt.setDouble(3, price);
+            pstmt.setString(4, category);
+            pstmt.setInt(5, id);
+            int affected = pstmt.executeUpdate();
+            return affected > 0;
+        } catch (SQLException e) {
+            System.out.println("updateMenuItem failed: " + e.getMessage());
+            return false;
+        }
+    }
+
+    public boolean deleteMenuItem(int id) {
+        String sql = "DELETE FROM menu_items WHERE id = ?";
+        try (Connection conn = connect();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setInt(1, id);
+            int affected = pstmt.executeUpdate();
+            System.out.println("[DB] Deleted menu_item #" + id + ", affected=" + affected);
+            if (affected > 0) {
+                // Keep order sequence aligned as well (defensive)
+                syncOrderSequence();
+            }
+            return affected > 0;
+        } catch (SQLException e) {
+            System.out.println("deleteMenuItem failed: " + e.getMessage());
+            return false;
+        }
+    }
+
+    // DELETE an order by id
+    public boolean deleteOrder(int orderId) {
+        String sql = "DELETE FROM orders WHERE id = ?";
+        try (Connection conn = connect();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setInt(1, orderId);
+            int affected = pstmt.executeUpdate();
+            System.out.println("[DB] Deleted order #" + orderId + ", affected=" + affected);
+            if (affected > 0) {
+                // After deleting, ensure sequence stays aligned with current max(id)
+                syncOrderSequence();
+            }
+            return affected > 0;
+        } catch (SQLException e) {
+            System.out.println("Deleting order failed: " + e.getMessage());
+            return false;
+        }
+    }
+
     // LOAD orders from DB and construct domain.Order objects
     public List<Order> loadOrders() {
         List<Order> orders = new ArrayList<>();
@@ -171,6 +242,57 @@ public class DatabaseManager {
         }
 
         return orders;
+    }
+
+    // Ensure PostgreSQL sequence for orders.id is set to max(id) to avoid lower nextval
+    public void syncOrderSequence() {
+        try (Connection conn = connect()) {
+            if (conn == null) {
+                System.out.println("[DB] Cannot sync sequence: no DB connection");
+                return;
+            }
+
+            // Get sequence name for the serial column
+            String seqName = null;
+            try (PreparedStatement pseq = conn.prepareStatement("SELECT pg_get_serial_sequence('orders','id') AS seq")) {
+                try (ResultSet rs = pseq.executeQuery()) {
+                    if (rs.next()) seqName = rs.getString("seq");
+                }
+            }
+
+            if (seqName == null || seqName.isEmpty()) {
+                System.out.println("[DB] Could not determine orders.id sequence name");
+                return;
+            }
+
+            int maxId = 0;
+            try (PreparedStatement pmax = conn.prepareStatement("SELECT COALESCE(MAX(id),0) AS maxid FROM orders")) {
+                try (ResultSet rs = pmax.executeQuery()) {
+                    if (rs.next()) maxId = rs.getInt("maxid");
+                }
+            }
+
+            String setvalSql = String.format("SELECT setval('%s', %d, true)", seqName.replace("'", "''"), maxId);
+            try (Statement stmt = conn.createStatement()) {
+                stmt.execute(setvalSql);
+                System.out.println("[DB] Order sequence " + seqName + " set to max(id)=" + maxId);
+
+                // Read back last_value and is_called for easier debugging
+                String checkSql = "SELECT last_value, is_called FROM " + seqName;
+                try (Statement stmt2 = conn.createStatement(); ResultSet rs2 = stmt2.executeQuery(checkSql)) {
+                    if (rs2.next()) {
+                        long lastVal = rs2.getLong("last_value");
+                        boolean isCalled = rs2.getBoolean("is_called");
+                        System.out.println("[DB] Sequence state: last_value=" + lastVal + ", is_called=" + isCalled);
+                    }
+                } catch (SQLException e) {
+                    System.out.println("[DB] Could not read sequence state: " + e.getMessage());
+                }
+            }
+
+        } catch (SQLException e) {
+            System.out.println("Syncing order sequence failed: " + e.getMessage());
+        }
     }
 
     // Parse items JSON string into list

@@ -5,6 +5,7 @@ import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpExchange;
 
 import domain.MenuItem;
+import domain.MenuItemFactory;
 import domain.Order;
 import exceptions.InvalidOrderException;
 import repository.MenuItemRepository;
@@ -27,6 +28,7 @@ public class RestServer {
     private static MenuItemRepository menuRepository;
     private static DatabaseManager databaseManager;
     private static final int PORT = 8080;
+    private static final String ADMIN_KEY = "meowadmin";
     
     // Database credentials
     private static final String DB_URL = "jdbc:postgresql://localhost:5432/restaurant_db";
@@ -56,21 +58,28 @@ public class RestServer {
             System.err.println("[Startup] Failed to load orders from DB: " + e.getMessage());
         }
 
+        // Ensure DB sequence for orders.id is in sync with max(id)
+        try {
+            databaseManager.syncOrderSequence();
+        } catch (Exception e) {
+            System.err.println("[Startup] Failed to sync order sequence: " + e.getMessage());
+        }
+
         // Optional: Recreate tables with merged schema (uncomment to reset database)
         // databaseManager.recreateTables();
 
         // Populate menu repository with default items
-        menuRepository.save(new MenuItem(1, "Margherita Pizza", "Classic pizza with tomato and mozzarella", 12.99, "Main"));
-        menuRepository.save(new MenuItem(2, "Carbonara Pasta", "Spaghetti with eggs, cheese, and pancetta", 14.50, "Main"));
-        menuRepository.save(new MenuItem(3, "Caesar Salad", "Romaine lettuce with croutons and Caesar dressing", 8.75, "Appetizer"));
-        menuRepository.save(new MenuItem(4, "Tiramisu", "Italian coffee-flavored dessert", 6.99, "Dessert"));
-        menuRepository.save(new MenuItem(5, "Coca Cola", "Refreshing soft drink", 2.50, "Drink"));
-        menuRepository.save(new MenuItem(6, "House Red Wine", "Full-bodied red wine", 7.50, "Drink"));
-        menuRepository.save(new MenuItem(7, "Grilled Salmon", "Salmon from Balkhash", 18.99, "Main"));
-        menuRepository.save(new MenuItem(8, "Caesar Olive", "Kolbasa, egg, cucumber, mayonaise", 6.50, "Appetizer"));
-        menuRepository.save(new MenuItem(9, "Cheesecake", "Cheese and cake", 6.50, "Dessert"));
-        menuRepository.save(new MenuItem(10, "Red Wine", "100 years wine", 1000.00, "Drink"));
-        menuRepository.save(new MenuItem(11, "Botol of Water", "Water", 1.00, "Drink"));
+        menuRepository.save(MenuItemFactory.create(1, "Margherita Pizza", "Classic pizza with tomato and mozzarella", 12.99, "Main"));
+        menuRepository.save(MenuItemFactory.create(2, "Carbonara Pasta", "Spaghetti with eggs, cheese, and pancetta", 14.50, "Main"));
+        menuRepository.save(MenuItemFactory.create(3, "Caesar Salad", "Romaine lettuce with croutons and Caesar dressing", 8.75, "Appetizer"));
+        menuRepository.save(MenuItemFactory.create(4, "Tiramisu", "Italian coffee-flavored dessert", 6.99, "Dessert"));
+        menuRepository.save(MenuItemFactory.create(5, "Coca Cola", "Refreshing soft drink", 2.50, "Drink"));
+        menuRepository.save(MenuItemFactory.create(6, "House Red Wine", "Full-bodied red wine", 7.50, "Drink"));
+        menuRepository.save(MenuItemFactory.create(7, "Grilled Salmon", "Salmon from Balkhash", 18.99, "Main"));
+        menuRepository.save(MenuItemFactory.create(8, "Caesar Olive", "Kolbasa, egg, cucumber, mayonaise", 6.50, "Appetizer"));
+        menuRepository.save(MenuItemFactory.create(9, "Cheesecake", "Cheese and cake", 6.50, "Dessert"));
+        menuRepository.save(MenuItemFactory.create(10, "Red Wine", "100 years wine", 1000.00, "Drink"));
+        menuRepository.save(MenuItemFactory.create(11, "Botol of Water", "Water", 1.00, "Drink"));
 
         // Create HTTP server
         HttpServer server = HttpServer.create(new InetSocketAddress(PORT), 0);
@@ -78,6 +87,7 @@ public class RestServer {
         // API endpoints
         server.createContext("/api/menu", new MenuApiHandler());
         server.createContext("/api/orders", new OrderApiHandler());
+        server.createContext("/api/admin/sync-sequence", new SyncSequenceHandler());
 
         // Static file serving
         server.createContext("/", new StaticFileHandler());
@@ -111,6 +121,12 @@ public class RestServer {
             try {
                 if ("GET".equals(method)) {
                     handleGetMenu(exchange);
+                } else if ("POST".equals(method)) {
+                    handleCreateMenuItem(exchange);
+                } else if ("PUT".equals(method)) {
+                    handleUpdateMenuItem(exchange, path);
+                } else if ("DELETE".equals(method)) {
+                    handleDeleteMenuItem(exchange, path);
                 } else if ("OPTIONS".equals(method)) {
                     exchange.sendResponseHeaders(200, -1);
                 } else {
@@ -120,6 +136,86 @@ public class RestServer {
                 System.err.println("[MenuAPI] Error: " + e.getMessage());
                 e.printStackTrace();
                 sendErrorResponse(exchange, 500, "Internal server error: " + e.getMessage());
+            }
+        }
+
+        private boolean isAdmin(HttpExchange exchange) {
+            java.util.List<String> vals = exchange.getRequestHeaders().get("X-Admin-Key");
+            if (vals == null || vals.isEmpty()) return false;
+            return ADMIN_KEY.equals(vals.get(0));
+        }
+
+        private void handleCreateMenuItem(HttpExchange exchange) throws IOException {
+            if (!isAdmin(exchange)) {
+                sendErrorResponse(exchange, 403, "Admin key required");
+                return;
+            }
+
+            String body = readRequestBody(exchange);
+            String name = extractJsonString(body, "name");
+            String description = extractJsonString(body, "description");
+            String category = extractJsonString(body, "category");
+            double price = extractJsonNumber(body, "price");
+
+            int id = databaseManager.createMenuItem(name, description, price, category);
+            if (id == -1) {
+                sendErrorResponse(exchange, 500, "Failed to create menu item");
+                return;
+            }
+
+            String json = String.format("{\"id\":%d,\"name\":\"%s\"}", id, escapeJson(name));
+            sendJsonResponse(exchange, json, 201);
+        }
+
+        private void handleUpdateMenuItem(HttpExchange exchange, String path) throws IOException {
+            if (!isAdmin(exchange)) {
+                sendErrorResponse(exchange, 403, "Admin key required");
+                return;
+            }
+            String[] parts = path.split("/");
+            if (parts.length < 3) {
+                sendErrorResponse(exchange, 400, "Invalid path");
+                return;
+            }
+
+            String idPart = parts[parts.length - 1];
+            try {
+                int id = Integer.parseInt(idPart);
+                String body = readRequestBody(exchange);
+                String name = extractJsonString(body, "name");
+                String description = extractJsonString(body, "description");
+                String category = extractJsonString(body, "category");
+                double price = extractJsonNumber(body, "price");
+
+                boolean ok = databaseManager.updateMenuItem(id, name, description, price, category);
+                if (ok) {
+                    sendJsonResponse(exchange, "{\"updated\":true}", 200);
+                } else {
+                    sendErrorResponse(exchange, 404, "Menu item not found");
+                }
+            } catch (NumberFormatException e) {
+                sendErrorResponse(exchange, 400, "Invalid id");
+            }
+        }
+
+        private void handleDeleteMenuItem(HttpExchange exchange, String path) throws IOException {
+            if (!isAdmin(exchange)) {
+                sendErrorResponse(exchange, 403, "Admin key required");
+                return;
+            }
+            String[] parts = path.split("/");
+            if (parts.length < 3) {
+                sendErrorResponse(exchange, 400, "Invalid path");
+                return;
+            }
+            String idPart = parts[parts.length - 1];
+            try {
+                int id = Integer.parseInt(idPart);
+                boolean ok = databaseManager.deleteMenuItem(id);
+                if (ok) sendJsonResponse(exchange, String.format("{\"deleted\":%d}", id), 200);
+                else sendErrorResponse(exchange, 404, "Menu item not found");
+            } catch (NumberFormatException e) {
+                sendErrorResponse(exchange, 400, "Invalid id");
             }
         }
 
@@ -206,6 +302,8 @@ public class RestServer {
                     handleGetOrders(exchange, path);
                 } else if ("POST".equals(method)) {
                     handleCreateOrder(exchange);
+                } else if ("DELETE".equals(method)) {
+                    handleDeleteOrder(exchange, path);
                 } else if ("OPTIONS".equals(method)) {
                     exchange.sendResponseHeaders(200, -1);
                 } else {
@@ -213,6 +311,32 @@ public class RestServer {
                 }
             } catch (Exception e) {
                 sendErrorResponse(exchange, 500, "Internal server error: " + e.getMessage());
+            }
+        }
+
+        private void handleDeleteOrder(HttpExchange exchange, String path) throws IOException {
+            // Expecting path like /api/orders/{id}
+            String[] parts = path.split("/");
+            if (parts.length < 3) {
+                sendErrorResponse(exchange, 400, "Invalid path");
+                return;
+            }
+
+            String idPart = parts[parts.length - 1];
+            try {
+                int id = Integer.parseInt(idPart);
+
+                boolean dbDeleted = databaseManager.deleteOrder(id);
+                boolean memDeleted = orderRepository.deleteById(id);
+
+                if (dbDeleted || memDeleted) {
+                    String json = String.format("{\"deleted\":%d}", id);
+                    sendJsonResponse(exchange, json, 200);
+                } else {
+                    sendErrorResponse(exchange, 404, "Order not found");
+                }
+            } catch (NumberFormatException e) {
+                sendErrorResponse(exchange, 400, "Invalid order id");
             }
         }
 
@@ -261,42 +385,71 @@ public class RestServer {
         
         private Order createOrderFromDatabase(String customerName, List<OrderController.OrderItemRequest> items)
         throws InvalidOrderException {
-            int orderId = orderRepository.getNextOrderId();
-            Order order = new Order(orderId, customerName);
-            double totalPrice = 0;
-            
-            // Create order in database
+            // First create order in database to obtain canonical ID
             int dbOrderId = databaseManager.createOrder(customerName);
             if (dbOrderId == -1) {
                 throw new InvalidOrderException("Failed to create order in database");
             }
-            
+
+            Order order = new Order(dbOrderId, customerName);
+            double totalPrice = 0;
+
             for (OrderController.OrderItemRequest itemReq : items) {
                 // Get item from repository
                 MenuItem item = menuRepository.findById(itemReq.menuItemId);
-                
+
                 // If not found in repository, create a placeholder item
                 if (item == null) {
                     System.out.println("[OrderAPI] Item #" + itemReq.menuItemId + " not in repository, creating placeholder");
                     item = new MenuItem(itemReq.menuItemId, "Item #" + itemReq.menuItemId, "Menu item", 0.0, "Other");
                 }
-                
+
                 // Add item to order based on quantity
                 for (int i = 0; i < itemReq.quantity; i++) {
                     order.addItem(item);
                     totalPrice += item.getPrice();
                 }
-                
+
                 // Save item to database with item details
                 databaseManager.addItemToOrder(dbOrderId, itemReq.menuItemId, itemReq.quantity, item.getName(), item.getPrice());
-                
+
                 System.out.println("[OrderAPI] Added to order: " + item.getName() + " x" + itemReq.quantity);
             }
-            
+
             order.setTotalPrice(totalPrice);
             orderRepository.save(order);
-            System.out.println("[OrderAPI] Order created: #" + orderId + " for " + customerName + " - Total: $" + totalPrice);
+            System.out.println("[OrderAPI] Order created: #" + dbOrderId + " for " + customerName + " - Total: $" + totalPrice);
             return order;
+        }
+    }
+
+    /**
+     * Simple admin endpoint to sync the orders sequence to MAX(id).
+     * Use with header `X-Admin-Key: meowadmin`.
+     */
+    static class SyncSequenceHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            addCORSHeaders(exchange);
+            String method = exchange.getRequestMethod();
+            if (!"POST".equalsIgnoreCase(method)) {
+                try { sendErrorResponse(exchange, 405, "Method not allowed"); } catch (IOException ignored) {}
+                return;
+            }
+
+            // Admin check
+            java.util.List<String> vals = exchange.getRequestHeaders().get("X-Admin-Key");
+            if (vals == null || vals.isEmpty() || !ADMIN_KEY.equals(vals.get(0))) {
+                try { sendErrorResponse(exchange, 403, "Admin key required"); } catch (IOException ignored) {}
+                return;
+            }
+
+            try {
+                databaseManager.syncOrderSequence();
+                sendJsonResponse(exchange, "{\"synced\":true}", 200);
+            } catch (Exception e) {
+                sendErrorResponse(exchange, 500, "Sync failed: " + e.getMessage());
+            }
         }
     }
 
@@ -365,7 +518,7 @@ public class RestServer {
     private static void addCORSHeaders(HttpExchange exchange) {
         exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
         exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-        exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type, Authorization");
+        exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Admin-Key");
     }
 
     private static void sendJsonResponse(HttpExchange exchange, String json, int statusCode) throws IOException {
@@ -479,6 +632,30 @@ public class RestServer {
         } catch (NumberFormatException e) {
             System.err.println("[OrderAPI] Failed to parse number: " + json.substring(start, Math.min(end + 5, json.length())));
             return 0;
+        }
+    }
+
+    private static double extractJsonNumber(String json, String key) {
+        String pattern = "\"" + key + "\":";
+        int start = json.indexOf(pattern);
+        if (start == -1) return 0.0;
+
+        start += pattern.length();
+        while (start < json.length() && Character.isWhitespace(json.charAt(start))) start++;
+
+        int end = start;
+        while (end < json.length()) {
+            char c = json.charAt(end);
+            if ((c >= '0' && c <= '9') || c == '.' || c == '-') end++; else break;
+        }
+
+        if (end <= start) return 0.0;
+
+        try {
+            String numStr = json.substring(start, end).trim();
+            return Double.parseDouble(numStr);
+        } catch (Exception e) {
+            return 0.0;
         }
     }
 
